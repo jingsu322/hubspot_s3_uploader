@@ -1,16 +1,32 @@
-# HubSpot S3 → Top‑Ingredients Updater
+# HubSpot S3 Uploader
 
-Populate & maintain the **top_ingredients** property on HubSpot companies by mining JSON files in S3.  A Google Sheet controls which records are processed and tracks status.
+This package implements an ETL pipeline to:
+1. Read raw JSON files from S3
+2. Extract product ingredient profiles
+3. Lookup scrape dates via Google Sheets
+4. Update HubSpot company records
+5. Move processed files in S3
 
-```bash
-# install
-poetry install
-cp .env.example .env  # then fill secrets
+## Installation
+```
+pip install .
+```
 
-# one‑time: discover S3 → Sheet rows
-poetry run python - <<'PY'
-from hubspot_s3_uploader.sheet_sync import sync_sheet; sync_sheet()
-PY
+## Configuration
+Set environment variables or edit `hubspot_s3_uploader/config.py`:
+- AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+- GOOGLE_SERVICE_ACCOUNT_JSON (path)
+- HUBSPOT_PRIVATE_APP_TOKEN
+- S3_BUCKET, PREFIXES
+- SHEET_KEYS
 
-# normal run (discovery + processing)
-poetry run python -m hubspot_s3_uploader
+## Usage
+Install and run:
+```
+run-profile-etl
+```
+
+Or via script:
+```
+bash scripts/run_etl.sh
+```

@@ -1,70 +1,67 @@
-"""High‑level orchestrator: discover rows ➜ extract ➜ update HubSpot ➜ mark Sheet."""
-from __future__ import annotations
-
-import concurrent.futures as futures
 import logging
-from pathlib import PurePosixPath
+import time
+from .config import PREFIXES, HUBSPOT_DELAY
+from .aws_client import list_json_keys, read_json, move_key
+from .extractor import extract_product_profile
+from .sheets_client import prod_ws, buyer_ws, seller_ws, build_lookup_dict
+from .hubspot_client import update_company
 
-from . import config, logger  # noqa: F401 – initialises logging globally
-from .hubspot_client import update_company_properties
-from .processors.base import Processor
-from .s3_client import S3Client
-from .sheets_client import iter_rows, SheetRow
-from .sheet_sync import sync_sheet
+logging.basicConfig(level=logging.INFO)
 
-log = logging.getLogger(__name__)
+def main():
+    date_buyer = build_lookup_dict(buyer_ws)
+    date_seller = build_lookup_dict(seller_ws)
 
+    headers = prod_ws.row_values(1)
+    col_map = {h: i+1 for i, h in enumerate(headers)}
+    data = prod_ws.get_all_records()
+    row_index = {str(r['record_id']): i+2 for i, r in enumerate(data)}
 
-# ---------------------------------------------------------------------------
-# 1. Per‑row worker
-# ---------------------------------------------------------------------------
+    for source, prefix in PREFIXES.items():
+        for key in list_json_keys(prefix):
+            file_id = key.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+            raw = read_json(key)
+            profile = extract_product_profile(raw, file_id, source)
 
-def _process_row(row: SheetRow) -> None:
-    if row.status.lower() == "done":
-        return  # skip already processed
+            if source == 'buyer':
+                last_date = date_buyer.get(file_id)
+            elif source == 'seller':
+                last_date = date_seller.get(file_id)
+            else:
+                items = json.loads(raw) if isinstance(raw, (bytes, str)) else raw
+                last_date = None
+                for item in items if isinstance(items, list) else [items]:
+                    upd = item.get('updated_at') or item.get('data', {}).get('updated_at')
+                    if upd:
+                        last_date = parser.parse(upd).date().isoformat()
+                        break
 
-    # 1. Choose extractor by source
-    try:
-        processor = Processor.for_source(row.source)
-    except ValueError:
-        row.mark("unsupported source"); return
+            try:
+                update_company(file_id, {'top_ingredients': profile, 'last_scraped_date': last_date})
+                status = 'done'
+            except Exception as e:
+                logging.error(f"HubSpot update failed for {file_id}: {e}")
+                status = 'error'
 
-    # 2. Download JSON for this record
-    bucket_prefix = f"s3://{row.target}/{row.source}/"
-    client = S3Client(bucket_prefix)
-    expected_key_end = f"{row.record_id}.json"
-    obj = next((o for o in client.iter_objects() if o.key.endswith(expected_key_end)), None)
-    if obj is None:
-        row.mark("file not found"); return
+            time.sleep(HUBSPOT_DELAY)
 
-    # 3. Extract → HubSpot
-    properties = processor.property_map(obj.body)
-    try:
-        update_company_properties(row.record_id, properties)
-        row.mark("done")
-    except Exception as exc:  # noqa: BLE001
-        log.exception("HubSpot update failed for %s: %s", row.record_id, exc)
-        row.mark("error")
+            dest = 's3-hubspot/done/' if status == 'done' else 's3-hubspot/error/'
+            move_key(key, dest)
 
+            row = row_index.get(file_id)
+            if row:
+                prod_ws.update_cell(row, col_map['last_scraped_date'], last_date)
+                prod_ws.update_cell(row, col_map['status'], status)
+            else:
+                new = [''] * len(headers)
+                new[col_map['source'] - 1] = f"{source}-{prefix.split('/')[0]}"
+                new[col_map['target'] - 1] = 's3-hubspot'
+                new[col_map['record_id'] - 1] = file_id
+                new[col_map['last_scraped_date'] - 1] = last_date
+                new[col_map['status'] - 1] = status
+                prod_ws.append_row(new)
 
-# ---------------------------------------------------------------------------
-# 2. Entry‑point
-# ---------------------------------------------------------------------------
+    logging.info("ETL run complete.")
 
-def run() -> None:
-    # Step 1 – ensure Sheet has rows for every S3 file
-    sync_sheet()
-
-    # Step 2 – iterate & process rows concurrently
-    rows = iter_rows()
-    if not rows:
-        log.info("No rows in Sheet – nothing to do")
-        return
-
-    with futures.ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as pool:
-        pool.map(_process_row, rows)
-
-
-# Allow `python -m hubspot_s3_uploader` to run pipeline
-if __name__ == "__main__":
-    run()
+if __name__ == '__main__':
+    main()

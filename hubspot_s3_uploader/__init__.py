@@ -1,12 +1,6 @@
-"""Top‑level package for the HubSpot S3 → Company updater."""
+__version__ = '0.1.0'
 
-__all__ = [
-    "config",
-    "logger",
-    "s3_client",
-    "hubspot_client",
-    "sheets_client",
-    "sheet_sync",
-    "runner",
-    "processors",
-]
+from .aws_client import list_json_keys, read_json, move_key
+from .extractor import extract_product_profile
+from .hubspot_client import update_company
+from .sheets_client import prod_ws, buyer_ws, seller_ws, build_lookup_dict
