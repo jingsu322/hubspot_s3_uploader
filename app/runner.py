@@ -3,7 +3,7 @@ import time
 from .config import PREFIXES, HUBSPOT_DELAY
 from .aws_client import list_json_keys, read_json, move_key
 from .extractor import extract_product_profile
-from .sheets_client import prod_ws, buyer_ws, seller_ws, build_lookup_dict
+from .gsheet_client import prod_ws, buyer_ws, seller_ws, build_lookup_dict
 from .hubspot_client import update_company
 
 logging.basicConfig(level=logging.INFO)

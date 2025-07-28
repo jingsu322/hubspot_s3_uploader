@@ -9,7 +9,8 @@ setup(
         'gspread',
         'oauth2client',
         'requests',
-        'python-dateutil'
+        'python-dateutil',
+        'python-dotenv'
     ],
     entry_points={
         'console_scripts': [
